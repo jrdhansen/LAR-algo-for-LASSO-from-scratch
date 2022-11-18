@@ -1,0 +1,81 @@
+/* This first line of code will need to be changed */
+FILENAME REFFILE '/home/u41171697/data/project2/tinder.csv';
+
+PROC IMPORT DATAFILE=REFFILE replace
+	DBMS=CSV
+	OUT=WORK.tinder;
+	GETNAMES=YES;
+RUN;
+
+/* Check hard upper bound on genuine */
+proc univariate data=tinder;
+ var genuine;
+ histogram genuine;
+run;
+
+/* Add ID variable where we sort by the genuine score */
+proc sort data=tinder; by genuine;
+data tinder; set tinder; ID = _n_;
+
+/* Plot the genunine scores. */
+proc sgplot data=tinder; 
+  scatter x=ID y=genuine;
+run;
+
+/* This is a way to create dummy variables automatically. the "class"
+   statement identifies which variables are categorical. proc glmmod 
+   then creates columns for every dummy variable. The column names 
+   are not informative, but when you run the data through a proc 
+   reg statement, each uninformative column name is paired with 
+   an informative label. 
+   
+   In this code, I consider ALL potential explanatory variables and place
+   all categorical variables at the end. Note that we use the outdesign 
+   dataset to fit our model. 
+*/ 
+proc glmmod data=tinder outdesign=GLMDesign outparm=GLMParm NOPRINT;
+ class orientation gender education income employment; 
+ model genuine = socprivconc instprivconc narcissism selfesteem loneliness
+                 hookup friends partner travel selfvalidation entertainment
+                 age impfitness impenergy impattractive orientation gender 
+                 education income employment;
+run;
+
+
+/* Separate Into Training and Test Sets. 
+Only Fit Models to the Training Set. The variable
+"Selected" separates training (0) from test (1) */ 
+proc surveyselect data=GLMDesign seed=12345 out=tinder2
+     rate=0.2 outall; /* Withold 20% for validation */
+run;
+
+data train; set tinder2;
+if Selected = 0;
+run;
+
+data test; set tinder2;
+if Selected = 1;
+run;
+
+/* Look at crude initial model. Notice that the variable names are all given 
+   as COL1-COL41. The parameter estimates table in the output of proc reg
+   will let you know which variables correspond to which column. */
+proc reg data=train plots=(CooksD RStudentByLeverage DFFITS DFBETAS);
+ model genuine = COL1-COL41 / vif collin;
+store regModel;
+run;
+
+/* Calculate MSPR */
+proc plm restore=regModel;
+ score data=test out=newTest predicted; 
+ run;
+
+data newTest; set newTest;
+MSE = (Genuine - Predicted)**2;
+run;
+
+proc means data = newTest;
+var MSE;
+run;
+
+
